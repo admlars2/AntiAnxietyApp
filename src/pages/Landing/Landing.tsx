@@ -17,23 +17,7 @@ import { StatsPanel } from "../../components/StatsPanel";
 
 const Landing: React.FC = () => {
     const [init, setInit] = useState(false);
-    const [scrollPosition, setScrollPosition] = useState(0);
-
-    useEffect(() => {
-        const handleWheel = (e: WheelEvent) => {
-            e.preventDefault();
-            setScrollPosition(prev => {
-                const newPosition = prev + e.deltaY;
-                // Optional: Add limits to how far the Earth can move
-                return Math.max(-1000, Math.min(1000, newPosition));
-            });
-        };
-
-        // Use wheel event instead of scroll
-        window.addEventListener('wheel', handleWheel, { passive: false });
-        return () => window.removeEventListener('wheel', handleWheel);
-    }, []);
-
+   
     useEffect(() => {
         initParticlesEngine(async (engine) => {
             await loadSlim(engine);
@@ -124,7 +108,7 @@ const Landing: React.FC = () => {
                     {/* Add lights */}
                     <ambientLight intensity={1.5} />
                     <pointLight position={[10, 10, 10]} intensity={20} />
-                    <Earth size={4} position={[0, -7, 0]} scrollPosition={scrollPosition}/>
+                    <Earth size={4} position={[0, -7, 0]} />
                 </Canvas>
             </div>
 
