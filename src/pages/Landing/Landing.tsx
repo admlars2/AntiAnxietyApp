@@ -8,15 +8,16 @@ import {
     OutMode,
 } from "@tsparticles/engine";
 import { loadSlim } from "@tsparticles/slim"
-import { Canvas } from "@react-three/fiber"
 // import { Link } from "react-router-dom"
 // import { ROUTES } from "../../routing/config"
 import styles from "./Landing.module.css"
-import Earth from "../../components/Earth/Earth"
 import { StatsPanel } from "../../components/StatsPanel";
+import EarthScene from "../../components/Earth/EarthScene";
 
 const Landing: React.FC = () => {
     const [init, setInit] = useState(false);
+    const [isEarthFixed, setIsEarthFixed] = useState(false);
+    const [forceIsNightTime, setForceIsNightTime] = useState(false);
    
     useEffect(() => {
         initParticlesEngine(async (engine) => {
@@ -101,19 +102,14 @@ const Landing: React.FC = () => {
                 className={styles.particles}
             />
             <div className={styles.planets}>
-                <Canvas
-                    camera={{ position: [0, 0, 8], fov: 45 }}
-                    className={styles.earth}
-                >
-                    {/* Add lights */}
-                    <ambientLight intensity={1.5} />
-                    <pointLight position={[10, 10, 10]} intensity={20} />
-                    <Earth size={4} position={[0, -7, 0]} />
-                </Canvas>
+                <EarthScene isEarthFixed={isEarthFixed} forceNightTime={forceIsNightTime} targetLocation={null}/>
             </div>
 
             <div className={styles.content}>
-                <h1 className={styles.title}>Welcome to my Portfolio</h1>  
+                <h1 className={styles.title}>Welcome to my Portfolio</h1>
+                <button className={styles.button} onClick={() => setIsEarthFixed(!isEarthFixed)}> Show My Location </button>
+                <button className={styles.button} onClick={() => setForceIsNightTime(!forceIsNightTime)}> Night Time </button>
+                <button>Does Nothing</button>
             </div>
         </main>
     )

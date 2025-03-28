@@ -1,11 +1,17 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react'
-import { useFrame, useLoader } from '@react-three/fiber'
+import { useFrame, useLoader, ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
 import SunCalc from 'suncalc'
 
 interface EarthProps {
     size?: number
     position?: [number, number, number]
+    isFixed?: boolean
+    forceNightTime?: ConstrainBoolean
+    targetLocation?: {
+        latitude: number
+        longitude: number
+    } | null
 }
 
 interface Location {
@@ -13,31 +19,25 @@ interface Location {
     longitude: number
 }
 
-const Earth: React.FC<EarthProps> = ({ size = 3, position = [0, 0, 0] }) => {
+const Earth: React.FC<EarthProps> = ({ size = 3, position = [0, 0, 0], isFixed = false, forceNightTime = false, targetLocation = null }) => {
     // Settings
     const scale = 1.5;
     const resolution = 64;
     const atmosphereSize = size * 1.03; // Glow circle radius
 
+    // Load day and night textures
+    const dayTexture = useLoader(THREE.TextureLoader, '/textures/EarthDay.jpg')
+    const nightTexture = useLoader(THREE.TextureLoader, '/textures/EarthNight.jpg')
+
     const [location, setLocation] = useState<Location | null>(null)
     const earthRef = useRef<THREE.Mesh>(null!)
     const rotationMatrix = new THREE.Matrix4()
-    const axisRotation = new THREE.Quaternion()
+    const axisRotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), THREE.MathUtils.degToRad(66.5)) // 23.5 degrees for Earth's axial tilt
 
     // For handling drag and physics rotation
     const isDragging = useRef(false)
     const lastPointerPos = useRef<{ x: number; y: number } | null>(null)
     const angularVelocity = useRef(new THREE.Vector3(0, 0, 0)) // in radians per frame (approx)
-
-    // Load day and night textures
-    const dayTexture = useLoader(THREE.TextureLoader, '/textures/EarthDay.jpg')
-    const nightTexture = useLoader(THREE.TextureLoader, '/textures/EarthNight.jpg')
-
-    // Load gradient map for toon shading (cartoon look)
-    const gradientMap = useLoader(THREE.TextureLoader, '/textures/gradient.png')
-    gradientMap.minFilter = THREE.NearestFilter
-    gradientMap.magFilter = THREE.NearestFilter
-    gradientMap.generateMipmaps = false
 
     // Get user location for day or night
     useEffect(() => {
@@ -56,6 +56,7 @@ const Earth: React.FC<EarthProps> = ({ size = 3, position = [0, 0, 0] }) => {
         }
     }, [])
 
+    // Determine if it's night time based on the location or fallback to local time
     const isNightTime = useMemo(() => {
         if (!location) {
             // Fallback to local time check
@@ -68,19 +69,33 @@ const Earth: React.FC<EarthProps> = ({ size = 3, position = [0, 0, 0] }) => {
         return now > times.sunset || now < times.sunrise
     }, [location])
 
-    // Set the initial axis rotation (tilt of 66.5 degrees around the Z axis)
-    axisRotation.setFromAxisAngle(new THREE.Vector3(0, 0, 1), THREE.MathUtils.degToRad(66.5))
+    // Determine the target quaternion for fixed rotation
+    const locationQuaternion = useMemo(() => {
+        const targetCoords = targetLocation || location;
+        if (!targetCoords) return null
+
+        const x = THREE.MathUtils.degToRad(-(69 - targetCoords.latitude)) // Adjusted for texture rotation and viewpoint
+        const y = THREE.MathUtils.degToRad(-targetCoords.longitude - 88) // Adjusted for texture rotation 
+        const z = THREE.MathUtils.degToRad(0)
+
+        const euler = new THREE.Euler(x, y, z, 'XYZ') 
+        const targetQuat = new THREE.Quaternion().setFromEuler(euler)
+        
+        return targetQuat
+    }, [location, targetLocation])
+
 
     // Pointer event handlers for dragging
-    const onPointerDown = (event: any) => {
+    const onPointerDown = (event: ThreeEvent<PointerEvent>) => {
+        // If fixed, disable drag behavior
+        if (isFixed) return
         isDragging.current = true
         lastPointerPos.current = { x: event.clientX, y: event.clientY }
-        // Optionally, you can stop propagation to avoid interfering with other controls
         event.stopPropagation()
     }
 
-    const onPointerMove = (event: any) => {
-        if (!isDragging.current || !lastPointerPos.current) return
+    const onPointerMove = (event: ThreeEvent<PointerEvent>) => {
+        if (isFixed || !isDragging.current || !lastPointerPos.current) return
 
         const deltaX = event.clientX - lastPointerPos.current.x
         const deltaY = event.clientY - lastPointerPos.current.y
@@ -100,7 +115,6 @@ const Earth: React.FC<EarthProps> = ({ size = 3, position = [0, 0, 0] }) => {
 
         // Update angular velocity (a rough estimate based on drag delta)
         const dragAngle = Math.sqrt(angleX * angleX + angleY * angleY)
-        // An approximate axis – this is a simplification and may be refined
         const axis = new THREE.Vector3(angleY, angleX, 0).normalize()
         angularVelocity.current.copy(axis.multiplyScalar(dragAngle))
 
@@ -109,32 +123,35 @@ const Earth: React.FC<EarthProps> = ({ size = 3, position = [0, 0, 0] }) => {
     }
 
     const onPointerUp = () => {
+        if (isFixed) return
         isDragging.current = false
         lastPointerPos.current = null
-    }
+    }    
 
-    // Modify the animation loop to include physics and drag
+    // Modify the animation loop to include physics, drag, and fixed transition
     useFrame((_, delta) => {
         if (!earthRef.current) return
 
-        if (!isDragging.current) {
+        if (isFixed && locationQuaternion) {
+            // Smoothly interpolate (slerp) toward the target rotation.
+            // Adjust transitionSpeed to control the smoothness.
+            const transitionSpeed = 1.0
+            earthRef.current.quaternion.slerp(locationQuaternion, delta * transitionSpeed)
+        } else if (!isDragging.current) {
             // Check if there's a residual angular velocity from dragging
             const speed = angularVelocity.current.length()
             const velocityThreshold = 0.001  // Minimum angular velocity to continue physics-based rotation
 
             if (speed > velocityThreshold) {
-                // Apply physics-based rotation using the current angular velocity
                 const axis = angularVelocity.current.clone().normalize()
-                // Multiply by delta to have time-based rotation
                 const angle = speed * delta
                 const deltaQuat = new THREE.Quaternion().setFromAxisAngle(axis, angle)
                 earthRef.current.quaternion.premultiply(deltaQuat)
 
-                // Apply friction to gradually reduce the angular velocity
-                const friction = 0.98  // Adjust friction as needed (closer to 1 = slower decay)
+                const friction = 0.98  // Friction factor for decay
                 angularVelocity.current.multiplyScalar(friction)
             } else {
-                // No significant angular velocity: revert to the base animation
+                // Base animation rotation when no dragging or fixed behavior is active
                 const baseRotation = delta * 0.025
                 rotationMatrix.makeRotationAxis(
                     new THREE.Vector3(0, 1, 0).applyQuaternion(axisRotation),
@@ -146,13 +163,14 @@ const Earth: React.FC<EarthProps> = ({ size = 3, position = [0, 0, 0] }) => {
         // When dragging, rotation is controlled by pointer events (onPointerMove)
     })
 
+    // Atmosphere shader
     const atmosphereMaterial = new THREE.ShaderMaterial({
         transparent: true,
         side: THREE.BackSide,
         uniforms: {
             glowColor: { value: new THREE.Color(0x88ccff) },
             viewVector: { value: new THREE.Vector3(0, 0, 1) },
-            innerRadius: { value: size - 1.0 },
+            innerRadius: { value: size - 1.25 },
             outerRadius: { value: atmosphereSize },
             intensityFactor: { value: 1.0 },
             objectPosition: { value: position }
@@ -178,15 +196,12 @@ const Earth: React.FC<EarthProps> = ({ size = 3, position = [0, 0, 0] }) => {
             uniform vec3 objectPosition;
             
             void main() {
-                // Calculate atmospheric density based on height
                 float height = (length(vWorldPosition) - innerRadius) / (outerRadius - innerRadius);
                 float density = exp(-height * intensityFactor);
-                
-                // Final color
                 gl_FragColor = vec4(glowColor, (density * 0.5));
             }
         `
-    });
+    })
 
     return (
         <>
@@ -199,13 +214,11 @@ const Earth: React.FC<EarthProps> = ({ size = 3, position = [0, 0, 0] }) => {
                 onPointerDown={onPointerDown}
                 onPointerMove={onPointerMove}
                 onPointerUp={onPointerUp}
-                // Optionally, you may want to listen to onPointerOut to end dragging if the pointer leaves the object
                 onPointerOut={onPointerUp}
             >
                 <sphereGeometry args={[size, resolution, resolution]} />
-                <meshToonMaterial 
-                    map={isNightTime ? nightTexture : dayTexture}
-                    gradientMap={gradientMap}
+                <meshStandardMaterial 
+                    map={(isNightTime || forceNightTime) ? nightTexture : dayTexture}
                 />
             </mesh>
 
